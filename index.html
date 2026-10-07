@@ -1,0 +1,89 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CPM Video Converter</title>
+<style>
+:root{--bg:#0b1020;--card:#141b30;--bd:#25304f;--tx:#e8ecf8;--mu:#8b97b8;--ac:#4f8cff;--ok:#22c55e;--er:#ef4444;--wa:#f59e0b}
+@media(prefers-color-scheme:light){:root{--bg:#f3f5fb;--card:#fff;--bd:#dde3f1;--tx:#12182b;--mu:#5d6988}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--tx)}
+.w{max-width:1000px;margin:0 auto;padding:20px}h1{margin:0;font-size:24px}.s,.m{color:var(--mu)}.s{margin:2px 0 0}.m{font-size:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-top:16px}
+#dz{border:2px dashed var(--bd);border-radius:14px;padding:40px 16px;text-align:center;cursor:pointer}#dz.on,#dz:hover{border-color:var(--ac);background:rgba(79,140,255,.08)}#dz b{font-size:18px}
+button,select{font:inherit;color:var(--tx);background:transparent;border:1px solid var(--bd);border-radius:8px;padding:6px 12px;cursor:pointer}button:disabled{opacity:.4;cursor:default}option{color:#000}
+.p{background:var(--ac);border-color:var(--ac);color:#fff}.d{color:var(--er)}.tb{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--mu);font-weight:500;padding:8px;border-bottom:1px solid var(--bd)}td{padding:10px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+.e{color:var(--er);font-size:12px}.bg{padding:2px 10px;border-radius:99px;font-size:12px;border:1px solid currentColor;white-space:nowrap}
+.ac{color:var(--ac)}.ok{color:var(--ok)}.er{color:var(--er)}.wa{color:var(--wa)}.mu{color:var(--mu)}
+.bar{height:8px;background:var(--bd);border-radius:9px;overflow:hidden;min-width:90px}.bar i{display:block;height:100%;background:var(--ac)}
+.act{display:flex;gap:6px;flex-wrap:wrap}#warn{display:none;color:var(--er);margin-top:12px}
+@media(max-width:700px){thead{display:none}tr{display:block;padding:10px 0;border-bottom:1px solid var(--bd)}td{display:flex;justify-content:space-between;gap:12px;border:0;padding:3px 0}td::before{content:attr(data-l);color:var(--mu)}}
+</style></head><body><div class="w">
+<h1>CPM Video Converter</h1><p class="s">Convert DAV / AVI / MKV / MOV / TS videos to MP4 — right in your browser. Files never leave your computer.</p>
+<div id="warn"></div>
+<div class="card"><div id="dz"><b>Drag &amp; drop videos here</b><p class="m">or click to select files · best for clips up to ~1 GB</p></div>
+<input id="fi" type="file" multiple hidden accept=".dav,.avi,.mkv,.mov,.ts,.mp4,.m4v,.mpg,.mpeg,.wmv,.flv,.webm,.asf">
+<p class="m" style="margin:12px 0 0">Mode: <select id="mode"><option value="auto">Fast (no re-encode if possible)</option><option value="enc">Re-encode H.264 (slower, most compatible)</option></select></p></div>
+<div class="card"><div class="tb"><button class="p" id="ca">Convert All</button><button id="da">Download All</button><button id="cc">Clear completed</button></div>
+<table><thead><tr><th>File</th><th>Size</th><th>Format</th><th>Status</th><th>Progress</th><th>Action</th></tr></thead><tbody id="tb"></tbody></table></div>
+<p class="m">Keep this tab open while converting. Tip: if a DAV fails with "Unsupported/proprietary", it needs the DVR maker's own player/converter.</p>
+</div>
+<script src="vendor/ffmpeg/ffmpeg.js"></script>
+<script>
+const $=s=>document.querySelector(s),rows=new Map(),ALLOWED='dav avi mkv mov ts mp4 m4v mpg mpeg wmv flv webm asf'.split(' ');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sz=b=>{if(!b)return'—';const u=['B','KB','MB','GB'];let i=0;while(b>=1024&&i<3){b/=1024;i++}return b.toFixed(i?1:0)+' '+u[i]};
+const ST={ready:['Ready','ac'],queued:['Queued','mu'],converting:['Converting','ac'],done:['Completed','ok'],failed:['Conversion failed','er'],cancelled:['Cancelled','mu']};
+let ff=null,loading=null,log='',cur=null;
+if(location.protocol==='file:'||!window.WebAssembly){const w=$('#warn');w.style.display='block';w.textContent='Open this page through a web address (http/https), not by double-clicking the file.'}
+async function ensure(){
+ if(ff&&ff.loaded)return ff;
+ if(!loading)loading=(async()=>{const f=new FFmpegWASM.FFmpeg();
+  f.on('log',({message})=>{log=(log+message+'\n').slice(-4000)});
+  f.on('progress',({progress})=>{if(cur){cur.progress=Math.max(0,Math.min(99,Math.round(progress*100)));render()}});
+  const u=p=>new URL(p,location.href).href;
+  await f.load({coreURL:u('vendor/core/ffmpeg-core.js'),wasmURL:u('vendor/core/ffmpeg-core.wasm')});ff=f;return f})().finally(()=>loading=null);
+ return loading}
+function why(r,e){const l=log+' '+(e&&e.message||'');
+ return /enlarge memory|out of memory|memory access out of bounds|OOM/i.test(l)?'File too large for browser memory. Try a smaller clip.'
+ :r.ext==='dav'&&/Invalid data found|could not find codec|not found|Unknown|no streams|Unsupported/i.test(l)?'Unsupported/proprietary DAV format. This file requires a compatible DAV decoder.'
+ :/Invalid data found|moov atom|corrupt/i.test(l)?'Corrupted file or invalid data':/Decoder .* not found|Unsupported codec|unknown codec/i.test(l)?'Unsupported codec':'FFmpeg could not decode this file'}
+async function doConvert(r){
+ r.status='converting';r.progress=0;r.error='';log='';render();let f;
+ try{f=await ensure();
+  const nm='in.'+r.ext;await f.createDir('/m').catch(()=>{});await f.mount('WORKERFS',{files:[new File([r.file],nm)]},'/m');
+  const pre=['-fflags','+genpts+discardcorrupt','-err_detect','ignore_err','-i','/m/'+nm,'-map','0:v:0','-map','0:a:0?'],
+   aud=['-c:a','aac','-b:a','128k','-ac','2'],tail=['-movflags','+faststart','out.mp4'];
+  const attempt=async v=>{log='';await f.deleteFile('out.mp4').catch(()=>{});const code=await f.exec([...pre,...v,...aud,...tail]);
+   if(r.cancelled)throw new Error('cancel');if(code!==0)return null;try{const d=await f.readFile('out.mp4');return d.length>1024?d:null}catch{return null}};
+  let data=null;
+  if(r.mode==='auto')data=await attempt(['-c:v','copy']);
+  if(!data){r.progress=0;data=await attempt(['-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2','-c:v','libx264','-preset','veryfast','-crf','23','-pix_fmt','yuv420p'])}
+  await f.deleteFile('out.mp4').catch(()=>{});
+  if(!data)throw new Error(why(r));
+  r.url=URL.createObjectURL(new Blob([data],{type:'video/mp4'}));r.outSize=data.length;r.status='done';r.progress=100;
+ }catch(e){if(r.cancelled)r.status='cancelled';else{r.status='failed';r.error=/^(Unsupported|File too|Corrupted|FFmpeg could)/.test(e.message)?e.message:why(r,e)}}
+ try{ff&&ff.terminate()}catch{}ff=null; // free all wasm memory after each file
+}
+async function pump(){if(cur)return;const r=[...rows.values()].find(x=>x.status==='queued');if(!r)return;cur=r;await doConvert(r);cur=null;render();pump()}
+function add(list){for(const f of list){const e=f.name.split('.').pop().toLowerCase(),id='f'+Math.random().toString(36).slice(2);
+ const r={id,file:f,name:f.name,size:f.size,ext:e,progress:0,status:'ready',error:''};
+ if(!ALLOWED.includes(e)){r.status='failed';r.error='File type not allowed'}else if(f.size>1.6*2**30){r.status='failed';r.error='Too large for the browser (over ~1.6 GB)'}
+ rows.set(id,r)}render()}
+function act(id,a){const r=rows.get(id);if(!r)return;
+ if(a==='convert'){r.mode=$('#mode').value;r.cancelled=false;r.status='queued';pump()}
+ else if(a==='cancel'){if(cur===r){r.cancelled=true;try{ff&&ff.terminate()}catch{}}else r.status='ready'}
+ else if(a==='download'){const x=document.createElement('a');x.href=r.url;x.download=r.name.replace(/\.[^.]+$/,'')+'.mp4';x.click()}
+ else if(a==='remove'){if(r.url)URL.revokeObjectURL(r.url);rows.delete(id)}render()}
+function render(){const L=[...rows.values()];
+ $('#tb').innerHTML=L.length?L.map(r=>{const s=r.status,[lb,c]=ST[s],B=(a,t,k='')=>`<button class="${k}" onclick="act('${r.id}','${a}')">${t}</button>`;
+  let ac=s==='ready'||s==='cancelled'?B('convert',s==='ready'?'Convert':'Retry','p')+B('remove','Remove'):s==='queued'||s==='converting'?B('cancel','Cancel','d'):s==='done'?B('download','Download','p')+B('remove','Remove'):B('remove','Remove');
+  return`<tr><td data-l="File">${esc(r.name)}</td><td data-l="Size">${sz(r.size)}${r.outSize?`<div class="m">MP4: ${sz(r.outSize)}</div>`:''}</td><td data-l="Format">${esc(r.ext.toUpperCase())}</td>
+  <td data-l="Status"><span class="bg ${c}">${lb}</span>${r.error?`<div class="e">${esc(r.error)}</div>`:''}</td>
+  <td data-l="Progress"><div class="bar"><i style="width:${s==='done'?100:r.progress}%"></i></div><div class="m">${s==='done'?100:r.progress}%</div></td><td data-l="Action"><div class="act">${ac}</div></td></tr>`}).join(''):'<tr><td colspan="6" class="m" style="text-align:center;padding:22px">No files yet</td></tr>';
+ $('#ca').disabled=!L.some(r=>r.status==='ready');$('#da').disabled=!L.some(r=>r.status==='done');$('#cc').disabled=!L.some(r=>['done','failed','cancelled'].includes(r.status))}
+$('#ca').onclick=()=>[...rows.values()].filter(r=>r.status==='ready').forEach(r=>act(r.id,'convert'));
+$('#da').onclick=async()=>{for(const r of[...rows.values()].filter(r=>r.status==='done')){act(r.id,'download');await new Promise(k=>setTimeout(k,500))}};
+$('#cc').onclick=()=>[...rows.values()].filter(r=>['done','failed','cancelled'].includes(r.status)).forEach(r=>act(r.id,'remove'));
+const dz=$('#dz'),fi=$('#fi');dz.onclick=()=>fi.click();fi.onchange=()=>{add(fi.files);fi.value=''};
+['dragover','dragenter'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('on')}));
+['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('on')}));
+dz.addEventListener('drop',ev=>add(ev.dataTransfer.files));render();
+</script></body></html>
