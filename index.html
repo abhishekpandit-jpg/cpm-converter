@@ -18,16 +18,16 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--mu);fon
 </style></head><body><div class="w">
 <h1>CPM Video Converter</h1><p class="s">Convert DAV / AVI / MKV / MOV / TS videos to MP4 — right in your browser. Files never leave your computer.</p>
 <div id="warn"></div>
-<div class="card"><div id="dz"><b>Drag &amp; drop videos here</b><p class="m">or click to select files · best for clips up to ~1 GB</p></div>
-<input id="fi" type="file" multiple hidden accept=".dav,.avi,.mkv,.mov,.ts,.mp4,.m4v,.mpg,.mpeg,.wmv,.flv,.webm,.asf">
-<p class="m" style="margin:12px 0 0">Mode: <select id="mode"><option value="auto">Fast (no re-encode if possible)</option><option value="enc">Re-encode H.264 (slower, most compatible)</option></select></p></div>
+<div class="card"><div id="dz"><b>Drag &amp; drop videos here</b><p class="m">or click to select files · best for clips up to ~1 GB; H.265/HEVC files take longer</p></div>
+<input id="fi" type="file" multiple hidden>
+<p class="m" style="margin:12px 0 0">Mode: <select id="mode"><option value="auto">Auto (fast copy if H.264, else convert to H.264)</option><option value="enc">Re-encode H.264 (slower, most compatible)</option></select></p></div>
 <div class="card"><div class="tb"><button class="p" id="ca">Convert All</button><button id="da">Download All</button><button id="cc">Clear completed</button></div>
 <table><thead><tr><th>File</th><th>Size</th><th>Format</th><th>Status</th><th>Progress</th><th>Action</th></tr></thead><tbody id="tb"></tbody></table></div>
 <p class="m">Keep this tab open while converting. Tip: if a DAV fails with "Unsupported/proprietary", it needs the DVR maker's own player/converter.</p>
 </div>
 <script src="vendor/ffmpeg/ffmpeg.js"></script>
 <script>
-const $=s=>document.querySelector(s),rows=new Map(),ALLOWED='dav avi mkv mov ts mp4 m4v mpg mpeg wmv flv webm asf'.split(' ');
+const $=s=>document.querySelector(s),rows=new Map(),ALLOWED='dav hav avi mkv mov ts mp4 m4v mpg mpeg wmv flv webm asf 264 h264 265 h265 ps vob mts m2ts 3gp'.split(' ');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const sz=b=>{if(!b)return'—';const u=['B','KB','MB','GB'];let i=0;while(b>=1024&&i<3){b/=1024;i++}return b.toFixed(i?1:0)+' '+u[i]};
 const ST={ready:['Ready','ac'],queued:['Queued','mu'],converting:['Converting','ac'],done:['Completed','ok'],failed:['Conversion failed','er'],cancelled:['Cancelled','mu']};
@@ -53,8 +53,9 @@ async function doConvert(r){
    aud=['-c:a','aac','-b:a','128k','-ac','2'],tail=['-movflags','+faststart','out.mp4'];
   const attempt=async v=>{log='';await f.deleteFile('out.mp4').catch(()=>{});const code=await f.exec([...pre,...v,...aud,...tail]);
    if(r.cancelled)throw new Error('cancel');if(code!==0)return null;try{const d=await f.readFile('out.mp4');return d.length>1024?d:null}catch{return null}};
+  log='';await f.exec(['-i','/m/'+nm]).catch(()=>{});const vm=/Video: (\w+)/.exec(log);r.vcodec=vm?vm[1]:'';
   let data=null;
-  if(r.mode==='auto')data=await attempt(['-c:v','copy']);
+  if(r.mode==='auto'&&r.vcodec==='h264')data=await attempt(['-c:v','copy']);
   if(!data){r.progress=0;data=await attempt(['-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2','-c:v','libx264','-preset','veryfast','-crf','23','-pix_fmt','yuv420p'])}
   await f.deleteFile('out.mp4').catch(()=>{});
   if(!data)throw new Error(why(r));
@@ -75,7 +76,7 @@ function act(id,a){const r=rows.get(id);if(!r)return;
 function render(){const L=[...rows.values()];
  $('#tb').innerHTML=L.length?L.map(r=>{const s=r.status,[lb,c]=ST[s],B=(a,t,k='')=>`<button class="${k}" onclick="act('${r.id}','${a}')">${t}</button>`;
   let ac=s==='ready'||s==='cancelled'?B('convert',s==='ready'?'Convert':'Retry','p')+B('remove','Remove'):s==='queued'||s==='converting'?B('cancel','Cancel','d'):s==='done'?B('download','Download','p')+B('remove','Remove'):B('remove','Remove');
-  return`<tr><td data-l="File">${esc(r.name)}</td><td data-l="Size">${sz(r.size)}${r.outSize?`<div class="m">MP4: ${sz(r.outSize)}</div>`:''}</td><td data-l="Format">${esc(r.ext.toUpperCase())}</td>
+  return`<tr><td data-l="File">${esc(r.name)}${r.vcodec?`<div class="m">Video: ${esc(r.vcodec)}</div>`:''}</td><td data-l="Size">${sz(r.size)}${r.outSize?`<div class="m">MP4: ${sz(r.outSize)}</div>`:''}</td><td data-l="Format">${esc(r.ext.toUpperCase())}</td>
   <td data-l="Status"><span class="bg ${c}">${lb}</span>${r.error?`<div class="e">${esc(r.error)}</div>`:''}</td>
   <td data-l="Progress"><div class="bar"><i style="width:${s==='done'?100:r.progress}%"></i></div><div class="m">${s==='done'?100:r.progress}%</div></td><td data-l="Action"><div class="act">${ac}</div></td></tr>`}).join(''):'<tr><td colspan="6" class="m" style="text-align:center;padding:22px">No files yet</td></tr>';
  $('#ca').disabled=!L.some(r=>r.status==='ready');$('#da').disabled=!L.some(r=>r.status==='done');$('#cc').disabled=!L.some(r=>['done','failed','cancelled'].includes(r.status))}
